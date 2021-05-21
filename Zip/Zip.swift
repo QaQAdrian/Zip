@@ -28,6 +28,12 @@ public enum ZipError: Error {
     }
 }
 
+public struct ZipEntryInfo {
+    public let fileName: String
+    public let isDirectory: Bool
+    public let fileInfo: unz_file_info64
+}
+
 public enum ZipCompression: Int {
     case NoCompression
     case BestSpeed
@@ -89,14 +95,19 @@ public class Zip {
      - parameter destination: Local file path to unzip to. NSURL.
      - parameter overwrite:   Overwrite bool.
      - parameter password:    Optional password if file is protected.
+     - parameter unzipFilter: Whether need to unzip this file.
      - parameter progress: A progress closure called after unzipping each file in the archive. Double value betweem 0 and 1.
      
      - throws: Error if unzipping fails or if fail is not found. Can be printed with a description variable.
      
      - notes: Supports implicit progress composition
      */
-    
-    public class func unzipFile(_ zipFilePath: URL, destination: URL, overwrite: Bool, password: String?, progress: ((_ progress: Double) -> ())? = nil, fileOutputHandler: ((_ unzippedFile: URL) -> Void)? = nil) throws {
+    public class func unzipFile(_ zipFilePath: URL,
+                                destination: URL,
+                                overwrite: Bool,
+                                password: String?,
+                                unzipFilter: ((ZipEntryInfo) -> Bool)?,
+                                progress: ((_ progress: Double) -> ())? = nil, fileOutputHandler: ((_ unzippedFile: URL) -> Void)? = nil) throws {
         
         // File manager
         let fileManager = FileManager.default
@@ -170,6 +181,19 @@ public class Zip {
             let fileInfoSizeFileName = Int(fileInfo.size_filename-1)
             if (fileName[fileInfoSizeFileName] == "/".cString(using: String.Encoding.utf8)?.first || fileName[fileInfoSizeFileName] == "\\".cString(using: String.Encoding.utf8)?.first) {
                 isDirectory = true;
+            }
+            if let filter =  unzipFilter {
+                let entry = ZipEntryInfo(fileName: String(cString: fileName), isDirectory: isDirectory, fileInfo: fileInfo)
+                if !filter(entry) {
+                    free(fileName)
+                    unzCloseCurrentFile(zip)
+                    ret = unzGoToNextFile(zip)
+                    if let progressHandler = progress{
+                        progressHandler((currentPosition/totalSize))
+                    }
+                    progressTracker.completedUnitCount = Int64(currentPosition)
+                    continue
+                }
             }
             free(fileName)
             if pathString.rangeOfCharacter(from: CharacterSet(charactersIn: "/\\")) != nil {
